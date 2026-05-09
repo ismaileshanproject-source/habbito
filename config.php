@@ -1,14 +1,17 @@
 <?php
 // ============================================================
-// HABBITO — config.php (Complete Railway Fix)
+// HABBITO — config.php (Full Railway Optimized Version)
 // ============================================================
 declare(strict_types=1);
 
 define('APP_NAME',    'Habbito');
-// Set to development temporarily to see the EXACT error on screen
-define('APP_ENV',     'development'); 
 
-// ── Database — Auto-Detecting Railway Variable Names ────────
+// Detects if we are on Railway or Local. 
+// Uses 'development' to show errors if something breaks.
+define('APP_ENV',     getenv('RAILWAY_ENVIRONMENT_NAME') ? 'production' : 'development'); 
+
+// ── Database — Using Railway Environment Variables ──────────
+// Checks for both MYSQLHOST and MYSQL_HOST formats
 define('DB_HOST', getenv('MYSQLHOST') ?: getenv('MYSQL_HOST') ?: 'localhost');
 define('DB_PORT', getenv('MYSQLPORT') ?: getenv('MYSQL_PORT') ?: 3306);
 define('DB_NAME', getenv('MYSQLDATABASE') ?: getenv('MYSQL_DATABASE') ?: 'habbito');
@@ -27,6 +30,7 @@ define('XP_LUCKY_MAX',   10);
 
 date_default_timezone_set('UTC');
 
+// ── Error Reporting ──────────────────────────────────────────
 if (APP_ENV === 'development') {
     ini_set('display_errors', '1');
     ini_set('display_startup_errors', '1');
@@ -50,69 +54,121 @@ function getDB(): PDO
             PDO::ATTR_EMULATE_PREPARES   => true, 
         ]);
     } catch (PDOException $e) {
-        $msg = 'DB Error: ' . $e->getMessage();
-        if (!headers_sent()) header('Content-Type: application/json');
+        $msg = (APP_ENV === 'development') 
+            ? 'DB Error: ' . $e->getMessage() 
+            : 'Database connection failed. Check your Railway Variables.';
+        
+        if (!headers_sent()) {
+            header('Content-Type: application/json; charset=utf-8');
+        }
         die(json_encode(['success' => false, 'error' => $msg]));
     }
     return $pdo;
 }
 
 // ── XP / Level Functions ──────────────────────────────────────
-function xpToLevel(int $xp): int {
+function xpToLevel(int $xp): int
+{
     if ($xp <= 0) return 1;
     return (int) max(1, floor((sqrt(8 * $xp + 225) - 15) / 2));
 }
-function levelStartXP(int $level): int {
+
+function levelStartXP(int $level): int
+{
     return (int) max(0, floor((pow(2 * $level + 15, 2) - 225) / 8));
 }
-function xpProgressPercent(int $xp): float {
-    $lvl = xpToLevel($xp); $start = levelStartXP($lvl); $next = levelStartXP($lvl + 1);
+
+function xpProgressPercent(int $xp): float
+{
+    $lvl   = xpToLevel($xp);
+    $start = levelStartXP($lvl);
+    $next  = levelStartXP($lvl + 1);
     $range = $next - $start;
-    return ($range <= 0) ? 100.0 : round(min(100.0, ($xp - $start) / $range * 100), 2);
+    if ($range <= 0) return 100.0;
+    return round(min(100.0, ($xp - $start) / $range * 100), 2);
 }
 
-// ── Response & Input Helpers ──────────────────────────────────
-function jsonResponse(array $data, int $code = 200): never {
+// ── JSON response ─────────────────────────────────────────────
+function jsonResponse(array $data, int $code = 200): never
+{
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit;
 }
-function clean(mixed $v, int $max = 255): string { return mb_substr(trim((string) $v), 0, $max); }
-function cleanInt(mixed $v): int { return filter_var($v, FILTER_VALIDATE_INT) !== false ? (int) $v : 0; }
-function cleanDate(string $v): string {
+
+// ── Input helpers ─────────────────────────────────────────────
+function clean(mixed $v, int $max = 255): string
+{
+    return mb_substr(trim((string) $v), 0, $max);
+}
+
+function cleanInt(mixed $v): int
+{
+    return filter_var($v, FILTER_VALIDATE_INT) !== false ? (int) $v : 0;
+}
+
+function cleanDate(string $v): string
+{
     $d = DateTime::createFromFormat('Y-m-d', $v);
     return ($d && $d->format('Y-m-d') === $v) ? $v : date('Y-m-d');
 }
 
 // ── Session & Auth ───────────────────────────────────────────
-function startSession(): void {
+function startSession(): void
+{
     if (session_status() === PHP_SESSION_NONE) {
         session_set_cookie_params(['lifetime'=>0,'path'=>'/','httponly'=>true,'samesite'=>'Strict']);
         session_start();
     }
 }
-function isLoggedIn(): bool { startSession(); return !empty($_SESSION['user_id']); }
-function currentUserId(): int { startSession(); return (int)($_SESSION['user_id'] ?? 0); }
-function currentUser(): array {
+
+function isLoggedIn(): bool
+{
+    startSession();
+    return !empty($_SESSION['user_id']);
+}
+
+function currentUserId(): int
+{
+    startSession();
+    return (int)($_SESSION['user_id'] ?? 0);
+}
+
+function currentUser(): array
+{
     startSession();
     return [
-        'id' => (int)($_SESSION['user_id'] ?? 0),
+        'id'       => (int)($_SESSION['user_id']  ?? 0),
         'username' => (string)($_SESSION['username'] ?? ''),
-        'avatar' => (string)($_SESSION['avatar'] ?? '🧑'),
+        'avatar'   => (string)($_SESSION['avatar']   ?? '🧑'),
     ];
 }
-function getCsrfToken(): string {
+
+function getCsrfToken(): string
+{
     startSession();
-    if (empty($_SESSION['csrf'])) { $_SESSION['csrf'] = bin2hex(random_bytes(32)); }
+    if (empty($_SESSION['csrf'])) {
+        $_SESSION['csrf'] = bin2hex(random_bytes(32));
+    }
     return $_SESSION['csrf'];
 }
-function requireLogin(): void {
+
+function requireLogin(): void
+{
     startSession();
-    if (empty($_SESSION['user_id'])) { header('Location: login.php'); exit; }
+    if (empty($_SESSION['user_id'])) {
+        header('Location: login.php');
+        exit;
+    }
 }
-function requireLoginAjax(): int {
+
+function requireLoginAjax(): int
+{
     startSession();
-    if (empty($_SESSION['user_id'])) { jsonResponse(['success' => false, 'error' => 'Not logged in'], 401); }
+    if (empty($_SESSION['user_id'])) {
+        jsonResponse(['success' => false, 'error' => 'Not logged in', 'redirect' => 'login.php'], 401);
+    }
     return (int) $_SESSION['user_id'];
 }
