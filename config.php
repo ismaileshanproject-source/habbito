@@ -1,14 +1,14 @@
 <?php
 // ============================================================
-// HABBITO — config.php (Bulletproof Railway Version)
+// HABBITO — config.php (Complete Railway Fix)
 // ============================================================
 declare(strict_types=1);
 
 define('APP_NAME',    'Habbito');
-define('APP_ENV',     getenv('RAILWAY_ENVIRONMENT_NAME') ? 'production' : 'development'); 
+// Set to development temporarily to see the EXACT error on screen
+define('APP_ENV',     'development'); 
 
 // ── Database — Auto-Detecting Railway Variable Names ────────
-// This checks for MYSQLHOST or MYSQL_HOST, etc.
 define('DB_HOST', getenv('MYSQLHOST') ?: getenv('MYSQL_HOST') ?: 'localhost');
 define('DB_PORT', getenv('MYSQLPORT') ?: getenv('MYSQL_PORT') ?: 3306);
 define('DB_NAME', getenv('MYSQLDATABASE') ?: getenv('MYSQL_DATABASE') ?: 'habbito');
@@ -29,6 +29,7 @@ date_default_timezone_set('UTC');
 
 if (APP_ENV === 'development') {
     ini_set('display_errors', '1');
+    ini_set('display_startup_errors', '1');
     error_reporting(E_ALL);
 } else {
     ini_set('display_errors', '0');
@@ -49,15 +50,69 @@ function getDB(): PDO
             PDO::ATTR_EMULATE_PREPARES   => true, 
         ]);
     } catch (PDOException $e) {
-        // If it fails, show the specific error only in development mode
-        $msg = (APP_ENV === 'development') 
-            ? 'DB Error: ' . $e->getMessage() 
-            : 'Database connection failed. Please check your Railway Variables.';
-        
+        $msg = 'DB Error: ' . $e->getMessage();
         if (!headers_sent()) header('Content-Type: application/json');
         die(json_encode(['success' => false, 'error' => $msg]));
     }
     return $pdo;
 }
 
-// ... rest of your helper functions (xpToLevel, jsonResponse, etc.) stay the same ...
+// ── XP / Level Functions ──────────────────────────────────────
+function xpToLevel(int $xp): int {
+    if ($xp <= 0) return 1;
+    return (int) max(1, floor((sqrt(8 * $xp + 225) - 15) / 2));
+}
+function levelStartXP(int $level): int {
+    return (int) max(0, floor((pow(2 * $level + 15, 2) - 225) / 8));
+}
+function xpProgressPercent(int $xp): float {
+    $lvl = xpToLevel($xp); $start = levelStartXP($lvl); $next = levelStartXP($lvl + 1);
+    $range = $next - $start;
+    return ($range <= 0) ? 100.0 : round(min(100.0, ($xp - $start) / $range * 100), 2);
+}
+
+// ── Response & Input Helpers ──────────────────────────────────
+function jsonResponse(array $data, int $code = 200): never {
+    http_response_code($code);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($data, JSON_UNESCAPED_UNICODE);
+    exit;
+}
+function clean(mixed $v, int $max = 255): string { return mb_substr(trim((string) $v), 0, $max); }
+function cleanInt(mixed $v): int { return filter_var($v, FILTER_VALIDATE_INT) !== false ? (int) $v : 0; }
+function cleanDate(string $v): string {
+    $d = DateTime::createFromFormat('Y-m-d', $v);
+    return ($d && $d->format('Y-m-d') === $v) ? $v : date('Y-m-d');
+}
+
+// ── Session & Auth ───────────────────────────────────────────
+function startSession(): void {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_set_cookie_params(['lifetime'=>0,'path'=>'/','httponly'=>true,'samesite'=>'Strict']);
+        session_start();
+    }
+}
+function isLoggedIn(): bool { startSession(); return !empty($_SESSION['user_id']); }
+function currentUserId(): int { startSession(); return (int)($_SESSION['user_id'] ?? 0); }
+function currentUser(): array {
+    startSession();
+    return [
+        'id' => (int)($_SESSION['user_id'] ?? 0),
+        'username' => (string)($_SESSION['username'] ?? ''),
+        'avatar' => (string)($_SESSION['avatar'] ?? '🧑'),
+    ];
+}
+function getCsrfToken(): string {
+    startSession();
+    if (empty($_SESSION['csrf'])) { $_SESSION['csrf'] = bin2hex(random_bytes(32)); }
+    return $_SESSION['csrf'];
+}
+function requireLogin(): void {
+    startSession();
+    if (empty($_SESSION['user_id'])) { header('Location: login.php'); exit; }
+}
+function requireLoginAjax(): int {
+    startSession();
+    if (empty($_SESSION['user_id'])) { jsonResponse(['success' => false, 'error' => 'Not logged in'], 401); }
+    return (int) $_SESSION['user_id'];
+}
