@@ -1,18 +1,19 @@
 <?php
 // ============================================================
-// HABBITO — config.php
+// HABBITO — config.php (Railway Optimized)
 // ============================================================
 declare(strict_types=1);
 
 define('APP_NAME',    'Habbito');
-define('APP_ENV',     'development'); // change to 'production' when live
+// Use 'production' on Railway to prevent leaking sensitive DB errors
+define('APP_ENV',     getenv('RAILWAY_ENVIRONMENT_NAME') ? 'production' : 'development'); 
 
-// ── Database — UPDATE THESE ───────────────────────────────────
-define('DB_HOST', 'localhost');
-define('DB_PORT', 3306);
-define('DB_NAME', 'habbito');
-define('DB_USER', 'root');
-define('DB_PASS', '');          // XAMPP default is blank
+// ── Database — Using Railway Environment Variables ──────────
+define('DB_HOST', getenv('MYSQLHOST') ?: 'localhost');
+define('DB_PORT', getenv('MYSQLPORT') ?: 3306);
+define('DB_NAME', getenv('MYSQLDATABASE') ?: 'habbito');
+define('DB_USER', getenv('MYSQLUSER') ?: 'root');
+define('DB_PASS', getenv('MYSQLPASSWORD') ?: ''); 
 
 // ── XP constants ──────────────────────────────────────────────
 define('XP_BASE',        10);
@@ -45,12 +46,17 @@ function getDB(): PDO
         $pdo = new PDO($dsn, DB_USER, DB_PASS, [
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES   => true,  // allows reuse of named params in same query
+            PDO::ATTR_EMULATE_PREPARES   => true, 
         ]);
     } catch (PDOException $e) {
         $msg = APP_ENV === 'development'
             ? 'DB Error: ' . $e->getMessage()
-            : 'Could not connect to the database. Check config.php credentials.';
+            : 'Could not connect to the database. Verify Railway Variables.';
+        
+        // Ensure we send a proper error even if it's not an AJAX request
+        if (!headers_sent()) {
+            header('Content-Type: application/json; charset=utf-8');
+        }
         die(json_encode(['success' => false, 'error' => $msg]));
     }
     return $pdo;
@@ -62,10 +68,12 @@ function xpToLevel(int $xp): int
     if ($xp <= 0) return 1;
     return (int) max(1, floor((sqrt(8 * $xp + 225) - 15) / 2));
 }
+
 function levelStartXP(int $level): int
 {
     return (int) max(0, floor((pow(2 * $level + 15, 2) - 225) / 8));
 }
+
 function xpProgressPercent(int $xp): float
 {
     $lvl   = xpToLevel($xp);
@@ -91,10 +99,12 @@ function clean(mixed $v, int $max = 255): string
 {
     return mb_substr(trim((string) $v), 0, $max);
 }
+
 function cleanInt(mixed $v): int
 {
     return filter_var($v, FILTER_VALIDATE_INT) !== false ? (int) $v : 0;
 }
+
 function cleanDate(string $v): string
 {
     $d = DateTime::createFromFormat('Y-m-d', $v);
@@ -142,7 +152,6 @@ function getCsrfToken(): string
 }
 
 // ── Guard helpers ─────────────────────────────────────────────
-// Call at top of page files
 function requireLogin(): void
 {
     startSession();
@@ -152,7 +161,6 @@ function requireLogin(): void
     }
 }
 
-// Call at top of ajax.php (returns JSON 401 if not logged in)
 function requireLoginAjax(): int
 {
     startSession();
